@@ -28,7 +28,7 @@ def send_files():
                                 break  # End of file
                             
                             sock.sendto(data, (ESP32_IP, UDP_PORT))  # Send binary data
-                            time.sleep(0.001)  # Delay to match baud rate
+                            time.sleep(0.1)  # Delay to match baud rate
 
                     print(f"Finished sending {bin_file}, moving to next file...")
 

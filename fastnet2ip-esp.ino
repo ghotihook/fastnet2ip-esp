@@ -273,7 +273,12 @@ double decode(uint8_t format, uint32_t data) {
             uint8_t segment_code = (data >> 8) & 0xFF;
             uint8_t value = data & 0xFF;
             decoded_value = (double)value / divisor;
-            if (segment_code == 0x28 || segment_code == 0xA0 || segment_code == 0x8C) {
+                char debug_message[50]; // Adjust size as needed
+                snprintf(debug_message, sizeof(debug_message), "Segment code: 0x%02X", segment_code);
+                debug_output(debug_message);
+
+            
+            if (segment_code == 0xa8 || segment_code == 0xa0 || segment_code == 0x8c) {
                 decoded_value = -decoded_value;
             }
             break;
