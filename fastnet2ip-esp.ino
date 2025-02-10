@@ -22,8 +22,8 @@
 #define ERROR_ENABLED true              // Toggle error output
 
 // WiFi credentials
-const char *ssid = "SSID";
-const char *password = "PASSWORD";
+const char *ssid = "Sakura";
+const char *password = "rosebuds";
 
 // ----------------------------------------------------------------------------------
 // Global Variables
