@@ -22,8 +22,8 @@
 #define ERROR_ENABLED true              // Toggle error output
 
 // WiFi credentials
-const char *ssid = "Sakura";
-const char *password = "rosebuds";
+const char *ssid = "SSID";
+const char *password = "PASSWORD";
 
 // ----------------------------------------------------------------------------------
 // Global Variables
@@ -232,7 +232,7 @@ void error_output(const char *message) {
  */
 void udp_sender(const char *nmea_sentence) {
     if (xQueueSendToBack(udpQueue, nmea_sentence, pdMS_TO_TICKS(10)) != pdPASS) {
-        Serial.println("⚠️ UDP Queue Full! Dropping message.");
+        error_output("UDP Queue Full! Dropping message.");
     }
 }
 
@@ -432,7 +432,7 @@ void connect_to_wifi() {
  * @param pvParameters Unused.
  */
 void task_serial_listener(void *pvParameters) {
-    debug_output("🟢 Listening on Serial2 for incoming data...");
+    debug_output("Listening on Serial2 for incoming data...");
 
     for (;;) {
         int available_bytes = Serial2.available();  // Get number of available bytes
@@ -663,7 +663,7 @@ void process_frame_ascii(uint8_t *body, size_t body_size) {
     snprintf(debug_lon, sizeof(debug_lon), "Extracted Lon: [%s] %c", lon_str, lon_cardinal);
     debug_output(debug_lon);
 
-    // **✅ Format GLL Sentence Without Float Conversion**
+    // ** Format GLL Sentence Without Float Conversion**
     char gll_sentence[80];
     char full_nmea_sentence[90];
 
@@ -678,11 +678,11 @@ void process_frame_ascii(uint8_t *body, size_t body_size) {
     // Format GLL NMEA sentence
     snprintf(gll_sentence, sizeof(gll_sentence), "$IIGLL,%s,%c,%s,%c,,A*", lat_str, lat_cardinal,lon_str, lon_cardinal);
 
-    // **✅ Calculate NMEA Checksum**
+    // ** Calculate NMEA Checksum**
     uint8_t checksum = calculate_nmea_checksum(gll_sentence);
     snprintf(full_nmea_sentence, sizeof(full_nmea_sentence), "%s%02X\r\n", gll_sentence, checksum);
 
-    // **✅ Send via UDP**
+    // ** Send via UDP**
     udp_sender(full_nmea_sentence);
 }
 
@@ -903,14 +903,14 @@ void setup() {
     // Create mutex for channel_register
     register_mutex = xSemaphoreCreateMutex();
     if (register_mutex == NULL) {
-        debug_output("Failed to create mutex!");
+        error_output("Failed to create mutex!");
         while (1);
     }
 
     // Create the UDP queue if not created globally
     udpQueue = xQueueCreate(10, sizeof(char[64]));
     if (udpQueue == NULL) {
-        Serial.println("Failed to create UDP queue!");
+        error_output("Failed to create UDP queue!");
         while (1);
     }
 
