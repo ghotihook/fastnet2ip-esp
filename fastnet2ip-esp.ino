@@ -9,74 +9,91 @@
 
 
 
-#define HEADER_SIZE 5
-#define MAX_BUFFER_SIZE 2048
-#define SERIAL_BAUD_RATE 115200
-#define UDP_PORT 2222
-#define NMEA_UDP_PORT 2002
-#define DISPLAY_UPDATE_INTERVAL 1000  // Update display every 0.5 seconds
-#define DEBUG_ENABLED false // Toggle debug output
-#define ERROR_ENABLED true
-
+// ----------------------------------------------------------------------------------
+// Configuration & Constants
+// ----------------------------------------------------------------------------------
+#define HEADER_SIZE 5                    // Number of bytes in the protocol header
+#define MAX_BUFFER_SIZE 1024            // Maximum buffer size for incoming data
+#define SERIAL_BAUD_RATE 115200         // Baud rate for standard serial debug output
+#define BANDG_BAUD_RATE 28800           // Baud rate for the BandG data stream (Serial2)
+#define NMEA_UDP_PORT 2002              // Port for UDP broadcast of NMEA sentences
+#define DISPLAY_UPDATE_INTERVAL 1000    // Interval to update M5CoreS3 display (ms)
+#define DEBUG_ENABLED false             // Toggle debug output
+#define ERROR_ENABLED true              // Toggle error output
 
 // WiFi credentials
-const char *ssid = "Sakura";
-const char *password = "rosebuds";
+const char *ssid = "SSID";
+const char *password = "PASSWORD";
 
-// UDP server
-WiFiUDP udp;
+// ----------------------------------------------------------------------------------
+// Global Variables
+// ----------------------------------------------------------------------------------
+
+// UDP server object
 WiFiUDP nmea_udp;
-char incomingPacket[MAX_BUFFER_SIZE];
+char incomingPacket[MAX_BUFFER_SIZE];  // Temporary buffer for reading from Serial2
 
-
-// Global buffer
+// Circular-like buffer for storing and processing BandG data
 static uint8_t buffer[MAX_BUFFER_SIZE];
-static size_t buffer_index = 0;
-static size_t expected_size = 0;
+static size_t buffer_index = 0;        // Tracks current write position in 'buffer'
+static size_t expected_size = 0;       // Expected frame size after parsing header
 
+// Counters for debugging/performance measurement
+volatile uint32_t input_channel_count = 0;    // How many channel updates have been processed
+volatile uint32_t output_udp_count = 0;       // How many NMEA sentences have been sent via UDP
 
-// Global counters
-volatile uint32_t input_channel_count = 0;
-volatile uint32_t output_udp_count = 0;
-
-// Last update timestamp
+// Timestamp to control display updates
 unsigned long last_display_update = 0;
 
-QueueHandle_t udpQueue = xQueueCreate(10, sizeof(char[64]));  // Queue for NMEA messages
+// FreeRTOS queue for sending NMEA sentences from processing to the UDP sender task
+QueueHandle_t udpQueue = xQueueCreate(10, sizeof(char[64]));
 
-
-// Mutex for thread-safe register access
+// Mutex for protecting access to the channel_register map
 SemaphoreHandle_t register_mutex;
 
 
-// Format size lookup table
+// ----------------------------------------------------------------------------------
+// Data Structures & Helpers
+// ----------------------------------------------------------------------------------
+
+/**
+ * @brief Returns the number of data bytes to read for a given 'format' nibble.
+ * @param format The lower nibble of the format byte (or format & 0x0F).
+ * @return The size in bytes to read for that format.
+ */
 size_t get_format_size(uint8_t format) {
     switch (format) {
-        case 0x00: return 4;
-        case 0x01: return 2;
-        case 0x02: return 2;
-        case 0x03: return 2;
-        case 0x04: return 4;
-        case 0x05: return 4;
-        case 0x06: return 4;
-        case 0x07: return 4;
-        case 0x08: return 2;
-        case 0x0A: return 4;
-        default:   return 0; // Unknown format
+        case 0x00: return 4;  // 32-bit raw
+        case 0x01: return 2;  // 16-bit signed
+        case 0x02: return 2;  // 10-bit data in 2 bytes
+        case 0x03: return 2;  // special segment code + byte
+        case 0x04: return 4;  // 24-bit signed
+        case 0x05: return 4;  // (not fully supported)
+        case 0x06: return 4;  // (not fully supported)
+        case 0x07: return 4;  // (not fully supported)
+        case 0x08: return 2;  // 9-bit data in 2 bytes
+        case 0x0A: return 4;  // 16-bit signed in upper 16 bits of 4 bytes
+        default:   return 0;  // Unknown or unimplemented format
     }
 }
 
+/**
+ * @brief Holds the latest value and timestamp for each channel.
+ */
 struct ChannelData {
-    double last_value;
-    unsigned long timestamp;  // Time of last update (milliseconds)
+    double last_value;        // Last decoded numeric value from the channel
+    unsigned long timestamp;  // Time (in ms) of last update
 };
 
+// Map of channel ID -> ChannelData
 std::map<uint8_t, ChannelData> channel_register;
 
 
-
-
-// Channel lookup table
+/**
+ * @brief Returns a human-readable channel name.
+ * @param channel The channel byte from BandG instrumentation.
+ * @return A constant char pointer to the channel name.
+ */
 const char *get_channel_name(uint8_t channel) {
     switch (channel) {
         case 0x00: return "Node Reset";
@@ -175,34 +192,55 @@ const char *get_channel_name(uint8_t channel) {
     }
 }
 
-// FreeRTOS task functions
-void task_udp_listener(void *pvParameters);
+// ----------------------------------------------------------------------------------
+// FreeRTOS Task Function Declarations
+// ----------------------------------------------------------------------------------
+
+// Forward declaration for the display update task
 void update_display(void *pvParameters);
 
 
-// Debug output function
+/**
+ * @brief Print a debug message if DEBUG_ENABLED is true.
+ * @param message The message to print.
+ */
 void debug_output(const char *message) {
     if (DEBUG_ENABLED) {
         Serial.println(message);
     }
 }
 
-
-
-// Debug output function
+/**
+ * @brief Print an error message if ERROR_ENABLED is true.
+ * @param message The message to print.
+ */
 void error_output(const char *message) {
     if (ERROR_ENABLED) {
         Serial.println(message);
     }
 }
 
+
+
+// ----------------------------------------------------------------------------------
+// UDP Sending & Task
+// ----------------------------------------------------------------------------------
+
+/**
+ * @brief Send an NMEA sentence string to the UDP queue for asynchronous transmission.
+ * @param nmea_sentence A null-terminated NMEA sentence.
+ */
 void udp_sender(const char *nmea_sentence) {
-    if (xQueueSend(udpQueue, nmea_sentence, pdMS_TO_TICKS(10)) != pdPASS) {
+    if (xQueueSendToBack(udpQueue, nmea_sentence, pdMS_TO_TICKS(10)) != pdPASS) {
         Serial.println("⚠️ UDP Queue Full! Dropping message.");
     }
 }
 
 
+/**
+ * @brief Task that receives NMEA sentences from a queue and sends them via UDP.
+ * @param pvParameters Unused.
+ */
 void udp_task(void *pvParameters) {
     char message[64];  // Buffer to hold messages from queue
     while (true) {
@@ -215,14 +253,24 @@ void udp_task(void *pvParameters) {
         }
     }
 }
-// LCD display function
+
+/**
+ * @brief Print a message to the M5Stack LCD screen.
+ * @param message The message to print.
+ */
 void lcd_output(const char *message) {
     M5.Lcd.fillScreen(BLACK);
     M5.Lcd.setCursor(10, 10);
     M5.Lcd.println(message);
 }
 
-// Calculate NMEA checksum (XOR of all characters between '$' and '*')
+
+
+/**
+ * @brief Calculate NMEA 0183 checksum for a sentence (excluding the '$' and trailing '*').
+ * @param sentence Null-terminated NMEA sentence (with '$' start, '*' near the end).
+ * @return The calculated checksum byte.
+ */
 uint8_t calculate_nmea_checksum(const char *sentence) {
     uint8_t checksum = 0;
     for (int i = 1; sentence[i] != '*' && sentence[i] != '\0'; i++) {
@@ -233,6 +281,15 @@ uint8_t calculate_nmea_checksum(const char *sentence) {
 
 
 
+// ----------------------------------------------------------------------------------
+// Channel Register Accessors
+// ----------------------------------------------------------------------------------
+
+/**
+ * @brief Retrieve the last stored value for a channel.
+ * @param channel The channel ID (0x00..0xFF).
+ * @return The last_value or 0.0 if not found.
+ */
 double get_last_value(uint8_t channel) {
     if (channel_register.find(channel) != channel_register.end()) {
         return channel_register[channel].last_value;
@@ -241,6 +298,11 @@ double get_last_value(uint8_t channel) {
 }
 
 
+/**
+ * @brief Retrieve the timestamp of the last update for a channel.
+ * @param channel The channel ID (0x00..0xFF).
+ * @return The timestamp in ms or 0 if not found.
+ */
 unsigned long get_last_update_time(uint8_t channel) {
     if (channel_register.find(channel) != channel_register.end()) {
         return channel_register[channel].timestamp;
@@ -249,7 +311,12 @@ unsigned long get_last_update_time(uint8_t channel) {
 }
 
 
-// Decoding function
+/**
+ * @brief Decode raw data into a double value according to the BandG format byte.
+ * @param format The format byte from the frame (0x..). Divisor is embedded in upper bits.
+ * @param data   Raw data combined into a 32-bit integer from the frame.
+ * @return Decoded floating-point value.
+ */
 double decode(uint8_t format, uint32_t data) {
     uint8_t divisorBits = (format >> 6) & 0x03;
     uint16_t divisor = (divisorBits == 0) ? 1 : (divisorBits == 1) ? 10 :
@@ -305,16 +372,14 @@ double decode(uint8_t format, uint32_t data) {
     return decoded_value;
 }
 
-// Function prototypes
-//void debug_output(const char *message);
-//uint8_t calculate_checksum(uint8_t *data, size_t length);
-//void process_frame(uint8_t *body, size_t body_size);
-//void process_stream();
-//void read_serial_data();
 
 
-
-// Checksum calculation
+/**
+ * @brief Calculates the BandG-specific checksum of a data array (sum of bytes).
+ * @param data Pointer to the data array.
+ * @param length Number of bytes to include.
+ * @return The resulting checksum (one byte).
+ */
 uint8_t calculate_checksum(uint8_t *data, size_t length) {
     uint16_t sum = 0;
     for (size_t i = 0; i < length; i++) {
@@ -326,7 +391,15 @@ uint8_t calculate_checksum(uint8_t *data, size_t length) {
 
 
 
-// WiFi connection function
+
+
+// ----------------------------------------------------------------------------------
+// Wi-Fi Connection
+// ----------------------------------------------------------------------------------
+
+/**
+ * @brief Connect to the configured Wi-Fi network. This function is used during setup.
+ */
 void connect_to_wifi() {
     WiFi.begin(ssid, password);
     debug_output("Connecting to WiFi...");
@@ -339,35 +412,67 @@ void connect_to_wifi() {
     snprintf(ip_msg, sizeof(ip_msg), "IP Address: %s", WiFi.localIP().toString().c_str());
     debug_output(ip_msg);
 
-    udp.begin(UDP_PORT);
+
 
     WiFi.setSleep(false);
     debug_output("Listening on UDP port 2222...");
 }
 
 
-// FreeRTOS Task: Listen for UDP packets
-void task_udp_listener(void *pvParameters) {
-    for (;;) {
-        int packetSize = udp.parsePacket();
-        if (packetSize > 0) {
-            if (buffer_index + packetSize > MAX_BUFFER_SIZE) {
-                error_output("BUFFER FULL! Dropping data");
-                buffer_index = 0;  // Reset buffer to prevent overflow
-                continue;
-            }
 
-            int len = udp.read(incomingPacket, packetSize);
+
+
+// ----------------------------------------------------------------------------------
+// Main Serial Listener Task
+// ----------------------------------------------------------------------------------
+
+/**
+ * @brief Task that continuously reads from Serial2 (BandG instrumentation).
+ *        Data is buffered, and then `process_stream()` is called to parse frames.
+ * @param pvParameters Unused.
+ */
+void task_serial_listener(void *pvParameters) {
+    debug_output("🟢 Listening on Serial2 for incoming data...");
+
+    for (;;) {
+        int available_bytes = Serial2.available();  // Get number of available bytes
+        if (available_bytes > 0) {
+            int len = Serial2.readBytes(incomingPacket, available_bytes);  // Read all available data
+
             if (len > 0) {
+                if (buffer_index + len > MAX_BUFFER_SIZE) {
+                    error_output("⚠️ BUFFER FULL! Shifting data to make room...");
+                    
+                    // Shift buffer to make room for new data
+                    memmove(buffer, buffer + len, MAX_BUFFER_SIZE - len);
+                    buffer_index -= len;
+                }
+
                 memcpy(buffer + buffer_index, incomingPacket, len);
                 buffer_index += len;
-                process_stream();  // Process immediately
+
+                if (buffer_index >= HEADER_SIZE) {
+                    process_stream();  // Process collected data
+                }
             }
         }
-        vTaskDelay(1);
+
+        vTaskDelay(0);
     }
 }
-// FreeRTOS Task: Update M5Stack LCD display
+
+
+
+
+// ----------------------------------------------------------------------------------
+// M5Stack Display Task
+// ----------------------------------------------------------------------------------
+
+/**
+ * @brief Task to periodically update the M5CoreS3 display with 
+ *        network status and data throughput rates.
+ * @param pvParameters Unused.
+ */
 void update_display(void *pvParameters) {
     M5.Lcd.setTextSize(2);
     static uint32_t prev_input = 0, prev_output = 0;
@@ -398,7 +503,7 @@ void update_display(void *pvParameters) {
         // Overwrite previous IP if changed
         if (last_ip != ipAddress) {
             M5.Lcd.setCursor(10, 10);
-            M5.Lcd.printf("IP: %s", last_ip.c_str());  
+            M5.Lcd.printf("%s", last_ip.c_str());  
             last_ip = ipAddress;
         }
 
@@ -420,7 +525,7 @@ void update_display(void *pvParameters) {
         M5.Lcd.setTextColor(WHITE);
 
         M5.Lcd.setCursor(10, 10);
-        M5.Lcd.printf("IP: %s", ipAddress.c_str());
+        M5.Lcd.printf("%s", ipAddress.c_str());
 
         M5.Lcd.setCursor(10, 40);
         M5.Lcd.printf("Input:  %4.0f channels/s", input_rate);
@@ -436,7 +541,18 @@ void update_display(void *pvParameters) {
 }
 
 
-// Stream processing function
+
+
+
+
+// ----------------------------------------------------------------------------------
+// BandG Stream Parsing
+// ----------------------------------------------------------------------------------
+
+/**
+ * @brief Continuously check the buffer for complete frames. If a valid frame is found,
+ *        decode it and remove it from the buffer.
+ */
 void process_stream() {
     while (buffer_index >= HEADER_SIZE) {
         uint8_t bodysize = buffer[2]; // Extract body size
@@ -490,6 +606,16 @@ void process_stream() {
     }
 }
 
+
+
+
+
+/**
+ * @brief Process an ASCII data frame (e.g., latitude/longitude string).
+ *        Here, we specifically build an NMEA GLL sentence and broadcast it via UDP.
+ * @param body Pointer to the frame data (excluding header).
+ * @param body_size Number of data bytes in this ASCII frame.
+ */
 void process_frame_ascii(uint8_t *body, size_t body_size) {
     // Ensure the string is null-terminated
     char ascii_str[body_size + 1];
@@ -560,130 +686,252 @@ void process_frame_ascii(uint8_t *body, size_t body_size) {
     udp_sender(full_nmea_sentence);
 }
 
-// Frame processing function
+
+
+/**
+ * @brief Process a numeric data frame: extract channel/format/data, decode, 
+ *        store in channel_register, and build relevant NMEA sentences.
+ * @param body Pointer to the numeric data bytes in the frame.
+ * @param body_size How many bytes of data in the frame.
+ */
 void process_frame(uint8_t *body, size_t body_size) {
     size_t index = 0;
     while (index < body_size) {
+        // Ensure there's enough space for channel + format
         if (index + 2 > body_size) break;
 
+        // 1) Read the channel byte
         uint8_t channel = body[index++];
+        // 2) Read the format byte
         uint8_t format = body[index++];
+        // 3) Determine how many data bytes this format requires
         size_t data_size = get_format_size(format & 0x0F);
 
+        // If there's not enough data left for this channel, skip
         if (index + data_size > body_size) {
             debug_output("Incomplete data for channel. Skipping.");
             break;
         }
 
+        // 4) Read the data bytes and combine into a 32-bit
         uint32_t data = 0;
         for (size_t i = 0; i < data_size; i++) {
             data = (data << 8) | body[index++];
         }
 
+        // 5) Decode the data
         double decoded_value = decode(format, data);
 
-        // ** Correctly increment input counter**
+        // Increment the input channel counter
         input_channel_count++;
 
+        // 6) Store the decoded value in the channel_register map (thread-safe)
         if (xSemaphoreTake(register_mutex, portMAX_DELAY) == pdTRUE) {
-            channel_register[channel] = {decoded_value, millis()};
+            if (channel_register.find(channel) == channel_register.end()) {
+                // If new channel, initialize with timestamp=0
+                channel_register[channel] = {decoded_value, 0};
+            } else {
+                channel_register[channel].last_value = decoded_value;
+                channel_register[channel].timestamp = millis();
+            }
             xSemaphoreGive(register_mutex);
         }
 
+        // For debug: print out processed info
         char msg[128];
-        snprintf(msg, sizeof(msg), "Processed Channel: %-25s (0x%02X) | Format: 0x%02X | Data: 0x%08X | Decoded: %10.6f",
+        snprintf(msg, sizeof(msg),
+                 "Processed Channel: %-25s (0x%02X) | Format: 0x%02X | Data: 0x%08X | Decoded: %10.6f",
                  get_channel_name(channel), channel, format, data, decoded_value);
         debug_output(msg);
 
-        // Construct and send NMEA messages
+        // 7) Build optional NMEA sentences for certain known channels
         char full_nmea_sentence[70];
-        char nmea_sentence[64] = {0};  // Ensure it's initialized
+        char nmea_sentence[64] = {0};  // Initialized to empty string
 
+        // -- Example channel: Boatspeed (Knots)
         if (strcmp(get_channel_name(channel), "Boatspeed (Knots)") == 0) {
-            double heading = get_last_value(0x49); // Get latest Heading (0x49 = Heading)
+            double heading = get_last_value(0x49); // Channel 0x49 is "Heading"
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIVHW,,,%.1f,M,%.1f,N,,*", heading, decoded_value);
-        } 
+        }
+        // -- Depth (Meters)
         else if (strcmp(get_channel_name(channel), "Depth (Meters)") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIDBT,,,%.2f,M,,*", decoded_value);
         }
+        // -- Rudder Angle
         else if (strcmp(get_channel_name(channel), "Rudder Angle") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIRSA,%.1f,A,,A*", decoded_value);
-        }   
+        }
+        // -- Battery Volts
         else if (strcmp(get_channel_name(channel), "Battery Volts") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,U,%.2f,V,BATTV*", decoded_value);
         }
+        // -- True Wind Direction
         else if (strcmp(get_channel_name(channel), "True Wind Direction") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$WIMWD,,,%.1f,M,,N*", decoded_value);
         }
+        // -- Heading
         else if (strcmp(get_channel_name(channel), "Heading") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIHDG,%.1f,,,,*", decoded_value);
         }
+        // -- True Wind Speed (Knots)
         else if (strcmp(get_channel_name(channel), "True Wind Speed (Knots)") == 0) {
-            double twa = get_last_value(0x59); // Get latest True Wind Angle (TWA)
-
-            // Convert TWA from ±180° to 0-360°
+            double twa = get_last_value(0x59); // 0x59 is "True Wind Angle"
+            // Convert TWA from ±180° to 0..360°
             if (twa < 0) {
                 twa += 360.0;
             }
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIMWV,%.1f,T,%.1f,N,A*", twa, decoded_value);
         }
+        // -- True Wind Angle
+        else if (strcmp(get_channel_name(channel), "True Wind Angle") == 0) {
+            double tws = get_last_value(0x55); // 0x55 is "True Wind Speed (Knots)"
+            double twa = decoded_value;
+            if (twa < 0) {
+                twa += 360.0;
+            }
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIMWV,%.1f,T,%.1f,N,A*", twa, tws);
+        }
+        // -- Apparent Wind Speed (Knots)
         else if (strcmp(get_channel_name(channel), "Apparent Wind Speed (Knots)") == 0) {
-            double awa = get_last_value(0x51); // Get latest Apparent Wind Angle (0x51 = AWA)
-            
-            // Convert -180 to 180 range into 0 to 360
+            double awa = get_last_value(0x51); // 0x51 is "Apparent Wind Angle"
+            // Convert from ±180° to 0..360°
             if (awa < 0) {
                 awa += 360.0;
             }
-
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIMWV,%.1f,R,%.1f,N,A*", awa, decoded_value);
         }
+        // -- Apparent Wind Angle
+        else if (strcmp(get_channel_name(channel), "Apparent Wind Angle") == 0) {
+            double aws = get_last_value(0x4D); // 0x4D is "Apparent Wind Speed (Knots)"
+            double awa = decoded_value;
+            if (awa < 0) {
+                awa += 360.0;
+            }
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIMWV,%.1f,R,%.1f,N,A*", awa, aws);
+        }
+        // -- Sea Temperature (°C)
         else if (strcmp(get_channel_name(channel), "Sea Temperature (°C)") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIMTW,%.1f,C*", decoded_value);
         }
-        else if (strcmp(get_channel_name(channel), "Speed Over Ground") == 0) {
-            double cog = get_last_value(0xEA); // Get latest Course Over Ground (Mag)
-            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIVTG,,%.1f,M,%.1f,N,,K*", cog, decoded_value);
+        // -- Tidal Drift
+        else if (strcmp(get_channel_name(channel), "Tidal Drift") == 0) {
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,M,DRIFT*", decoded_value);
         }
-        // Only proceed if a sentence was set
+        // -- Tidal Set
+        else if (strcmp(get_channel_name(channel), "Tidal Set") == 0) {
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.0f,D,SET*", decoded_value);
+        }
+        // -- Measured Wind Angle (Raw)
+        else if (strcmp(get_channel_name(channel), "Measured Wind Angle (Raw)") == 0) {
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.2f,V,Wind_A_Raw*", decoded_value);
+        }
+        // -- Measured Wind Speed (Raw)
+        else if (strcmp(get_channel_name(channel), "Measured Wind Speed (Raw)") == 0) {
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,Wind_S_Raw*", decoded_value);
+        }
+        // -- Speed Over Ground
+        else if (strcmp(get_channel_name(channel), "Speed Over Ground") == 0) {
+            double cog = get_last_value(0xEA); // 0xEA is "Course Over Ground (Mag)"
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIVTG,,,%.1f,M,%.1f,N,,,A*", cog, decoded_value);
+        }
+
+        // 8) If we built an NMEA sentence, finalize with checksum & send
         if (nmea_sentence[0] != '\0') {
             uint8_t checksum = calculate_nmea_checksum(nmea_sentence);
             snprintf(full_nmea_sentence, sizeof(full_nmea_sentence), "%s%02X\r\n", nmea_sentence, checksum);
             udp_sender(full_nmea_sentence);
-
         }
     }
 }
+// ----------------------------------------------------------------------------------
+// Arduino Setup & Loop
+// ----------------------------------------------------------------------------------
 
-
-
-// Setup function to start FreeRTOS tasks
+/**
+ * @brief Arduino setup function - initializes M5, Serial, Wi-Fi, tasks, etc.
+ */
 void setup() {
     last_display_update = millis();
-    Serial.begin(SERIAL_BAUD_RATE);
+
+    // Initialize M5CoreS3 hardware
     M5.begin();
+
+    // Prepare the LCD
     M5.Lcd.setTextSize(2);
+    M5.Lcd.setCursor(10, 10);
+    M5.Lcd.setTextColor(WHITE, BLACK);
+
+    // Start the standard Serial for debugging
+    Serial.begin(SERIAL_BAUD_RATE);
+
+    // Setup Serial2 to read from BandG instrumentation
+    // Arguments: baudRate, config, RX pin, TX pin, invert, bufferSize
+    Serial2.begin(BANDG_BAUD_RATE, SERIAL_8O2, 18, 17, false, 1024);
+
+    // Verify the actual baud rate set
+    uint32_t actualBaud = Serial2.baudRate();
+    char debug_msg[50];
+    snprintf(debug_msg, sizeof(debug_msg), "Serial2 Config: %u baud, 8O2", actualBaud);
+    debug_output(debug_msg);
+
     debug_output("ESP32 FreeRTOS Decoder Initialized!");
 
-    connect_to_wifi();
+    // Show message on the screen while connecting to Wi-Fi
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(10, 10);
+    M5.Lcd.println("Connecting to WiFi...");
 
+    // Attempt to connect to Wi-Fi (blocking) with a simple "dots" animation
+    WiFi.begin(ssid, password);
+    int dots = 0;
+    while (WiFi.status() != WL_CONNECTED) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        dots = (dots + 1) % 4;
+
+        // Clear screen and print new status
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.setCursor(10, 10);
+        M5.Lcd.printf("Connecting to WiFi%s", 
+            dots == 0 ? "" : (dots == 1 ? "." : (dots == 2 ? ".." : "...")));
+    }
+
+    // Once connected, print IP address
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(10, 10);
+    M5.Lcd.printf("WiFi Connected!\nIP: %s", WiFi.localIP().toString().c_str());
+
+    // Create mutex for channel_register
     register_mutex = xSemaphoreCreateMutex();
     if (register_mutex == NULL) {
         debug_output("Failed to create mutex!");
         while (1);
     }
 
+    // Create the UDP queue if not created globally
     udpQueue = xQueueCreate(10, sizeof(char[64]));
     if (udpQueue == NULL) {
-        Serial.println("⚠️ Failed to create UDP queue!");
+        Serial.println("Failed to create UDP queue!");
         while (1);
     }
 
-
-    udp.begin(UDP_PORT);
+    // Begin listening for UDP on the specified port
     nmea_udp.begin(NMEA_UDP_PORT);
-    xTaskCreatePinnedToCore(task_udp_listener, "UDP Listener", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(update_display, "Update Display", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(udp_task, "UDP Sender", 4096, NULL, 1, NULL, 1);
+
+    // Clear the LCD for main usage
+    M5.Lcd.fillScreen(BLACK);
+
+    // Launch FreeRTOS tasks:
+    // 1) Serial listener: read from BandG instrumentation
+    xTaskCreatePinnedToCore(task_serial_listener, "Serial Listener", 8192, NULL, 3, NULL, 1);
+    // 2) UDP sending task
+    xTaskCreatePinnedToCore(udp_task, "UDP Sender", 8192, NULL, 2, NULL, 1);
+    // 3) Display update task
+    xTaskCreatePinnedToCore(update_display, "Update Display", 8192, NULL, 1 , NULL, 0);
 }
 
-void loop() {}
+/**
+ * @brief Arduino loop function - empty because we rely on FreeRTOS tasks instead.
+ */
+void loop() {
+    // No code needed here because all functionality is handled in tasks
+}
