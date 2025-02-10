@@ -10,5 +10,5 @@ Implemented in C and designed to run on M5Stack Core S3 ESP-32 and the associate
 - Configure UDP Port, SSID and password within the .ino file and then use the Arduino IDE to write to the Core S3 module.
 
 ## Images
-![fastnet2ip-esp Running on a M5Stack Core S3](images/cores3.jpg "Core S3")
+![fastnet2ip-esp Running on a M5Stack Core S3](images/cores3.jpeg "Core S3")
 
