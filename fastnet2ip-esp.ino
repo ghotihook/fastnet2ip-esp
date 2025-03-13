@@ -98,6 +98,18 @@ const char *get_channel_name(uint8_t channel) {
     switch (channel) {
         case 0x00: return "Node Reset";
         case 0x0B: return "Rudder Angle";
+        case 0x0C: return "Linear 5";
+        case 0x0D: return "Linear 6";
+        case 0x0E: return "Linear 7";
+        case 0x0F: return "Linear 8";
+        case 0x10: return "Linear 9";
+        case 0x11: return "Linear 10";
+        case 0x12: return "Linear 11";
+        case 0x13: return "Linear 12";
+        case 0x14: return "Linear 13";
+        case 0x15: return "Linear 14";
+        case 0x16: return "Linear 15";
+        case 0x17: return "Linear 16";
         case 0x1C: return "Air Temperature (°F)";
         case 0x1D: return "Air Temperature (°C)";
         case 0x1E: return "Sea Temperature (°F)";
@@ -110,20 +122,25 @@ const char *get_channel_name(uint8_t channel) {
         case 0x35: return "Optimum Wind Angle";
         case 0x36: return "Depth Sounder Receiver Gain";
         case 0x37: return "Depth Sounder Noise";
+        case 0x38: return "Linear 1";
+        case 0x39: return "Linear 2";
+        case 0x3A: return "Linear 3";
         case 0x3B: return "Linear 4";
         case 0x3C: return "Rate Motion";
         case 0x41: return "Boatspeed (Knots)";
         case 0x42: return "Boatspeed (Raw)";
+        case 0x44: return "Yaw rate";
         case 0x46: return "Autopilot Speed Fixed (Knots)";
         case 0x47: return "LatLon";
         case 0x49: return "Heading";
         case 0x4A: return "Heading (Raw)";
         case 0x4D: return "Apparent Wind Speed (Knots)";
-        case 0x4E: return "Measured Wind Speed (Raw)";
+        case 0x4E: return "Apparent Wind Speed (Raw)";
         case 0x4F: return "Apparent Wind Speed (m/s)";
+        case 0x50: return "from NMEA";
         case 0x51: return "Apparent Wind Angle";
-        case 0x52: return "Measured Wind Angle (Raw)";
-        case 0x53: return "Autopilot Target TWA";
+        case 0x52: return "Apparent Wind Angle (Raw)";
+        case 0x53: return "Target TWA";
         case 0x55: return "True Wind Speed (Knots)";
         case 0x56: return "True Wind Speed (m/s)";
         case 0x57: return "Measured Wind Speed (Knots)";
@@ -131,12 +148,15 @@ const char *get_channel_name(uint8_t channel) {
         case 0x5A: return "Measured Wind Angle Deg";
         case 0x64: return "Average Speed (Knots)";
         case 0x65: return "Average Speed (Raw)";
+        case 0x68: return "Request for Data";
         case 0x69: return "Course";
+        case 0x6A: return "Act for Data";
         case 0x6D: return "True Wind Direction";
         case 0x6F: return "Next Leg Apparent Wind Angle";
         case 0x70: return "Next Leg Target Boat Speed";
         case 0x71: return "Next Leg Apparent Wind Speed";
         case 0x75: return "Timer";
+        case 0x7C: return "Polar Performance";
         case 0x7D: return "Target Boatspeed";
         case 0x7F: return "Velocity Made Good (Knots)";
         case 0x81: return "Dead Reckoning Distance";
@@ -162,36 +182,10 @@ const char *get_channel_name(uint8_t channel) {
         case 0xDC: return "Local Time";
         case 0xD3: return "Dead Reckoning Course";
         case 0xE0: return "Bearing Wpt. to Wpt. (True)";
-        case 0xE1: return "Bearing Wpt. to Wpt. (Mag)";
-        case 0xE2: return "Layline Distance";
-        case 0xE3: return "Bearing to Waypoint (Rhumb True)";
-        case 0xE4: return "Bearing to Waypoint (Rhumb Mag)";
-        case 0xE5: return "Bearing to Waypoint (G.C. True)";
-        case 0xE6: return "Bearing to Waypoint (G.C. Mag)";
-        case 0xE7: return "Distance to Waypoint (Rhumb)";
-        case 0xE8: return "Distance to Waypoint (G.C.)";
-        case 0xE9: return "Course Over Ground (True)";
-        case 0xEA: return "Course Over Ground (Mag)";
-        case 0xEB: return "Speed Over Ground";
-        case 0xEC: return "VMG to Waypoint (VMC)";
-        case 0xED: return "Time to Waypoint";
-        case 0xEE: return "Cross Track Error";
-        case 0xEF: return "Remote 0";
-        case 0xF0: return "Remote 1";
-        case 0xF1: return "Remote 2";
-        case 0xF2: return "Remote 3";
-        case 0xF3: return "Remote 4";
-        case 0xF4: return "Remote 5";
-        case 0xF5: return "Remote 6";
-        case 0xF6: return "Remote 7";
-        case 0xF7: return "Remote 8";
-        case 0xF8: return "Remote 9";
-        case 0xFA: return "Next Waypoint Distance";
-        case 0xFB: return "Time to Layline";
+        case 0xFA: return "Course to Sail";
         default: return "Unknown";
     }
 }
-
 // ----------------------------------------------------------------------------------
 // FreeRTOS Task Function Declarations
 // ----------------------------------------------------------------------------------
@@ -821,12 +815,12 @@ void process_frame(uint8_t *body, size_t body_size) {
         else if (strcmp(get_channel_name(channel), "Tidal Set") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.0f,D,SET*", decoded_value);
         }
-        // -- Measured Wind Angle (Raw)
-        else if (strcmp(get_channel_name(channel), "Measured Wind Angle (Raw)") == 0) {
+        // -- Apparent Wind Angle (Raw)
+        else if (strcmp(get_channel_name(channel), "Apparent Wind Angle (Raw)") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.2f,V,Wind_A_Raw*", decoded_value);
         }
-        // -- Measured Wind Speed (Raw)
-        else if (strcmp(get_channel_name(channel), "Measured Wind Speed (Raw)") == 0) {
+        // -- Apparent Wind Speed (Raw)
+        else if (strcmp(get_channel_name(channel), "Apparent Wind Speed (Raw)") == 0) {
             snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,Wind_S_Raw*", decoded_value);
         }
         // -- Speed Over Ground
