@@ -395,23 +395,24 @@ uint8_t calculate_checksum(uint8_t *data, size_t length) {
 /**
  * @brief Connect to the configured Wi-Fi network. This function is used during setup.
  */
-//void connect_to_wifi() {
-//    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-//    debug_output("Connecting to WiFi...");
-//    while (WiFi.status() != WL_CONNECTED) {
-//        vTaskDelay(pdMS_TO_TICKS(500));
-//        debug_output(".");
-//    }
-//    debug_output("WiFi connected!");
-//    char ip_msg[64];
-//    snprintf(ip_msg, sizeof(ip_msg), "IP Address: %s", WiFi.localIP().toString().c_str());
-//    debug_output(ip_msg);
+void connect_to_wifi() {
+    WiFi.mode(WIFI_STA);  
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
 
+    int dots = 0;
+    while (WiFi.status() != WL_CONNECTED) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        dots = (dots + 1) % 4;
 
-
-//    WiFi.setSleep(false);
-//    debug_output("Listening on UDP port 2222...");
-//}
+        // Clear screen and print new status
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.setCursor(10, 10);
+        M5.Lcd.printf("Connecting to WiFi%s", 
+            dots == 0 ? "" : (dots == 1 ? "." : (dots == 2 ? ".." : "...")));
+    }
+}
 
 
 
@@ -877,22 +878,7 @@ void setup() {
     M5.Lcd.println("Connecting to WiFi...");
 
     // Attempt to connect to Wi-Fi (blocking) with a simple "dots" animation
-    WiFi.mode(WIFI_STA);  
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    WiFi.setSleep(false);
-    WiFi.setAutoReconnect(true);
-    
-    int dots = 0;
-    while (WiFi.status() != WL_CONNECTED) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-        dots = (dots + 1) % 4;
-
-        // Clear screen and print new status
-        M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.setCursor(10, 10);
-        M5.Lcd.printf("Connecting to WiFi%s", 
-            dots == 0 ? "" : (dots == 1 ? "." : (dots == 2 ? ".." : "...")));
-    }
+    connect_to_wifi();
 
     // Once connected, print IP address
     M5.Lcd.fillScreen(BLACK);
@@ -921,11 +907,13 @@ void setup() {
 
     // Launch FreeRTOS tasks:
     // 1) Serial listener: read from BandG instrumentation
-    xTaskCreatePinnedToCore(task_serial_listener, "Serial Listener", 8192, NULL, 3, NULL, 1);
+
     // 2) UDP sending task
-    xTaskCreatePinnedToCore(udp_task, "UDP Sender", 8192, NULL, 2, NULL, 1);
+ 
     // 3) Display update task
     xTaskCreatePinnedToCore(update_display, "Update Display", 8192, NULL, 1 , NULL, 0);
+    xTaskCreatePinnedToCore(task_serial_listener, "Serial Listener", 8192, NULL, 3, NULL, 1);
+    xTaskCreatePinnedToCore(udp_task, "UDP Sender", 8192, NULL, 2, NULL, 1);
 }
 
 /**
