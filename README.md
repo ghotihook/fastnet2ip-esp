@@ -3,7 +3,7 @@ Implemented in C and designed to run on M5Stack Core S3 ESP-32 and the associate
 
 
 ## Recommended Hardware
-- [M5Stack Core S3](https://shop.m5stack.com/products/m5stack-cores3-se-iot-controller-w-o-battery-bottom)
+- [M5Stack Core S3](https://shop.m5stack.com/products/m5stack-cores3-se-iot-controller-w-o-battery-bottom) - don't forget seperate power supply required for this!!
 - [M5Stack Power CAN Module](https://shop.m5stack.com/products/pwrcan-13-2-module-with-isolated-2-ch-can-1-ch-rs485)
 
 ## Instructions

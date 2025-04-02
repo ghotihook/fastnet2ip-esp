@@ -22,9 +22,6 @@
 #define DEBUG_ENABLED false             // Toggle debug output
 #define ERROR_ENABLED true              // Toggle error output
 
-// WiFi credentials
-//const char *ssid = "Sakura";
-//const char *password = "rosebuds";
 
 // ----------------------------------------------------------------------------------
 // Global Variables
@@ -52,6 +49,8 @@ QueueHandle_t udpQueue = xQueueCreate(10, sizeof(char[64]));
 // Mutex for protecting access to the channel_register map
 SemaphoreHandle_t register_mutex;
 
+// Global register mapping row numbers to the currently drawn text.
+std::map<int, String> displayRegister;
 
 // ----------------------------------------------------------------------------------
 // Data Structures & Helpers
@@ -253,11 +252,11 @@ void udp_task(void *pvParameters) {
  * @brief Print a message to the M5Stack LCD screen.
  * @param message The message to print.
  */
-void lcd_output(const char *message) {
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setCursor(10, 10);
-    M5.Lcd.println(message);
-}
+//void lcd_output(const char *message) {
+//    M5.Lcd.fillScreen(BLACK);
+//    M5.Lcd.setCursor(10, 10);
+//    M5.Lcd.println(message);
+//}
 
 
 
@@ -405,12 +404,9 @@ void connect_to_wifi() {
     while (WiFi.status() != WL_CONNECTED) {
         vTaskDelay(pdMS_TO_TICKS(500));
         dots = (dots + 1) % 4;
-
-        // Clear screen and print new status
-        M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.setCursor(10, 10);
-        M5.Lcd.printf("Connecting to WiFi%s", 
-            dots == 0 ? "" : (dots == 1 ? "." : (dots == 2 ? ".." : "...")));
+        String wifiStatus = "Connecting to WiFi";
+        wifiStatus += (dots == 0 ? "" : (dots == 1 ? "." : (dots == 2 ? ".." : "...")));
+        drawLine(10, wifiStatus, WHITE);
     }
 }
 
@@ -433,6 +429,7 @@ void task_serial_listener(void *pvParameters) {
     for (;;) {
         int available_bytes = Serial2.available();  // Get number of available bytes
         if (available_bytes > 0) {
+            debug_output("Data is available on the bus\n");
             int len = Serial2.readBytes(incomingPacket, available_bytes);  // Read all available data
 
             if (len > 0) {
@@ -455,6 +452,39 @@ void task_serial_listener(void *pvParameters) {
 
         vTaskDelay(0);
     }
+}
+
+
+/**
+ * @brief Draws text on a given row only if it differs from what was previously drawn.
+ *        It erases the old text by printing it in black and then prints the new text in the desired color.
+ *
+ * @param row      The y-coordinate (in pixels) where the text should be drawn.
+ * @param newText  The text to be displayed.
+ * @param color    The color to use for the new text.
+ */
+void drawLine(int row, const String &newText, uint16_t color) {
+    // Check if this row already has the same text.
+    if (displayRegister.find(row) != displayRegister.end() && displayRegister[row] == newText) {
+        return; // Nothing to do if the text is unchanged.
+    }
+    
+    // If there is an old text, erase it by printing it in black.
+    if (displayRegister.find(row) != displayRegister.end()) {
+        String oldText = displayRegister[row];
+        // Set both the text and background color to BLACK for erasing.
+        M5.Lcd.setTextColor(BLACK, BLACK);
+        M5.Lcd.setCursor(10, row);
+        M5.Lcd.print(oldText);
+    }
+    
+    // Now draw the new text in the specified color.
+    M5.Lcd.setTextColor(color, BLACK);
+    M5.Lcd.setCursor(0, row);
+    M5.Lcd.print(newText);
+    
+    // Update our register with the new text.
+    displayRegister[row] = newText;
 }
 
 
@@ -493,42 +523,17 @@ void update_display(void *pvParameters) {
         // Get current IP Address
         String ipAddress = WiFi.localIP().toString();
 
-        // **Erase previous text before writing new values**
-        M5.Lcd.setTextColor(BLACK);  // Set color to black to "erase" old text
 
-        // Overwrite previous IP if changed
-        if (last_ip != ipAddress) {
-            M5.Lcd.setCursor(10, 10);
-            M5.Lcd.printf("%s", last_ip.c_str());  
-            last_ip = ipAddress;
-        }
+        drawLine(10, ipAddress.c_str(), WHITE);
 
-        // Overwrite previous Input Rate if changed
-        if (last_input_rate != input_rate) {
-            M5.Lcd.setCursor(10, 40);
-            M5.Lcd.printf("Input:  %4.0f channels/s", last_input_rate);
-            last_input_rate = input_rate;
-        }
-
-        // Overwrite previous Output Rate if changed
-        if (last_output_rate != output_rate) {
-            M5.Lcd.setCursor(10, 70);
-            M5.Lcd.printf("Output: %4.0f NMEA/s", last_output_rate);
-            last_output_rate = output_rate;
-        }
-
-        // **Draw new values in white**
-        M5.Lcd.setTextColor(WHITE);
-
-        M5.Lcd.setCursor(10, 10);
-        M5.Lcd.printf("%s", ipAddress.c_str());
-
-        M5.Lcd.setCursor(10, 40);
-        M5.Lcd.printf("Input:  %4.0f channels/s", input_rate);
-
-        M5.Lcd.setCursor(10, 70);
-        M5.Lcd.printf("Output: %4.0f NMEA/s", output_rate);
+        char inputBuffer[32];
+        snprintf(inputBuffer, sizeof(inputBuffer), "Input:  %4.0f channels/s", input_rate);
+        drawLine(40, String(inputBuffer), WHITE);
         
+        char outputBuffer[32];
+        snprintf(outputBuffer, sizeof(outputBuffer), "Output:  %4.0f NMEA/s", input_rate);
+        drawLine(70, String(outputBuffer), WHITE);
+
         last_display_update = current_time;
 
         // Wait until next execution time (ensures stable intervals)
@@ -874,16 +879,13 @@ void setup() {
 
     // Show message on the screen while connecting to Wi-Fi
     M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setCursor(10, 10);
-    M5.Lcd.println("Connecting to WiFi...");
+    drawLine(10, "Starting Up...", WHITE);
+
+
 
     // Attempt to connect to Wi-Fi (blocking) with a simple "dots" animation
     connect_to_wifi();
 
-    // Once connected, print IP address
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setCursor(10, 10);
-    M5.Lcd.printf("WiFi Connected!\nIP: %s", WiFi.localIP().toString().c_str());
 
     // Create mutex for channel_register
     register_mutex = xSemaphoreCreateMutex();
@@ -911,9 +913,11 @@ void setup() {
     // 2) UDP sending task
  
     // 3) Display update task
-    xTaskCreatePinnedToCore(update_display, "Update Display", 8192, NULL, 1 , NULL, 0);
     xTaskCreatePinnedToCore(task_serial_listener, "Serial Listener", 8192, NULL, 3, NULL, 1);
     xTaskCreatePinnedToCore(udp_task, "UDP Sender", 8192, NULL, 2, NULL, 1);
+    xTaskCreatePinnedToCore(update_display, "Update Display", 8192, NULL, 1 , NULL, 0);
+
+
 }
 
 /**
