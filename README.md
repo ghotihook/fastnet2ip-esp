@@ -8,7 +8,7 @@ Implemented in C and designed to run on M5Stack Core S3 ESP-32 and the associate
 
 ## Instructions
 - rename secrets_template.h to secrets.h
-- configure wifi SSID and password in secretes.h
+- configure wifi SSID and password in secrets.h
 - configure the UDP port (if required) in the .ino file
 - User the Arduino IDE to compile nad load to the Core S3 (SE) module
 
