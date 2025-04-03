@@ -7,7 +7,10 @@ Implemented in C and designed to run on M5Stack Core S3 ESP-32 and the associate
 - [M5Stack Power CAN Module](https://shop.m5stack.com/products/pwrcan-13-2-module-with-isolated-2-ch-can-1-ch-rs485)
 
 ## Instructions
-- Configure UDP Port, SSID and password within the .ino file and then use the Arduino IDE to write to the Core S3 module.
+- rename secrets_template.h to secrets.h
+- configure wifi SSID and password in secretes.h
+- configure the UDP port (if required) in the .ino file
+- User the Arduino IDE to compile nad load to the Core S3 (SE) module
 
 ## Images
 ![fastnet2ip-esp Running on a M5Stack Core S3](images/cores3.jpeg "Core S3")
