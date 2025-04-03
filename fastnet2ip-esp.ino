@@ -521,17 +521,17 @@ void update_display(void *pvParameters) {
         prev_output = output_udp_count;
 
         // Get current IP Address
-        String ipAddress = WiFi.localIP().toString();
+        String ipAddress = WiFi.localIP().toString() + ":" + String(NMEA_UDP_PORT);
 
 
-        drawLine(10, ipAddress.c_str(), WHITE);
+        drawLine(10, ipAddress, WHITE);
 
         char inputBuffer[32];
         snprintf(inputBuffer, sizeof(inputBuffer), "Input:  %4.0f channels/s", input_rate);
         drawLine(40, String(inputBuffer), WHITE);
         
         char outputBuffer[32];
-        snprintf(outputBuffer, sizeof(outputBuffer), "Output:  %4.0f NMEA/s", input_rate);
+        snprintf(outputBuffer, sizeof(outputBuffer), "Output:  %4.0f NMEA/s", output_rate);
         drawLine(70, String(outputBuffer), WHITE);
 
         last_display_update = current_time;
