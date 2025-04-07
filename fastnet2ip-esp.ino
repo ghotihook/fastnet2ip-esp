@@ -832,7 +832,7 @@ void process_frame(uint8_t *body, size_t body_size) {
         }
         // -- BSP (Raw)
         else if (strcmp(get_channel_name(channel), "Boatspeed (Raw)") == 0) {
-            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,BSP_RAW*", decoded_value);
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,RAW_BSP*", decoded_value);
         }
         // -- Speed Over Ground
         else if (strcmp(get_channel_name(channel), "Speed Over Ground") == 0) {
