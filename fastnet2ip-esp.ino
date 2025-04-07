@@ -824,11 +824,15 @@ void process_frame(uint8_t *body, size_t body_size) {
         }
         // -- Apparent Wind Angle (Raw)
         else if (strcmp(get_channel_name(channel), "Apparent Wind Angle (Raw)") == 0) {
-            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.2f,V,Wind_A_Raw*", decoded_value);
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.2f,V,WIND_A_RAW*", decoded_value);
         }
         // -- Apparent Wind Speed (Raw)
         else if (strcmp(get_channel_name(channel), "Apparent Wind Speed (Raw)") == 0) {
-            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,Wind_S_Raw*", decoded_value);
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,WIND_S_RAW*", decoded_value);
+        }
+        // -- BSP (Raw)
+        else if (strcmp(get_channel_name(channel), "Boatspeed (Raw)") == 0) {
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,BSP_RAW*", decoded_value);
         }
         // -- Speed Over Ground
         else if (strcmp(get_channel_name(channel), "Speed Over Ground") == 0) {
