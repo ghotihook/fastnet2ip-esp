@@ -182,6 +182,9 @@ const char *get_channel_name(uint8_t channel) {
         case 0xDC: return "Local Time";
         case 0xD3: return "Dead Reckoning Course";
         case 0xE0: return "Bearing Wpt. to Wpt. (True)";
+        case 0xE9: return "Course Over Ground (True)";
+        case 0xEA: return "Course Over Ground (Mag)";
+        case 0xEB: return "Speed Over Ground";        
         case 0xFA: return "Course to Sail";
         default: return "Unknown";
     }
