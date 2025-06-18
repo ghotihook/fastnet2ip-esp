@@ -354,6 +354,11 @@ double decode(uint8_t format, uint32_t data) {
             decoded_value = 0;
             break;
         case 0x07:
+            // to correctly interperate HEEL which is H[value] or [value]H we need to add a check here 
+            // Byte 1 [ignore]
+            // Byte 2 1st bit is Left or right, next 7 bits are the 7 seg display 0xF3 is H[value] and 0x73 is [value]H
+            // Byte 3 1st bit is ignored, then the remaining 7 bits are the MSB of 15bit unsigned value
+            // Byte 4 full 8 bits LSB of 15bit unsigned value
             decoded_value = (double)(uint16_t)(data & 0x7FFF)/ divisor;
             break;
         case 0x08: //last 9 bits of the 2 bytes 
@@ -827,11 +832,11 @@ void process_frame(uint8_t *body, size_t body_size) {
         }
         // -- Apparent Wind Angle (Raw)
         else if (strcmp(get_channel_name(channel), "Apparent Wind Angle (Raw)") == 0) {
-            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.2f,V,WIND_A_RAW*", decoded_value);
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,A,%.2f,V,RAW_WIND_A*", decoded_value);
         }
         // -- Apparent Wind Speed (Raw)
         else if (strcmp(get_channel_name(channel), "Apparent Wind Speed (Raw)") == 0) {
-            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,WIND_S_RAW*", decoded_value);
+            snprintf(nmea_sentence, sizeof(nmea_sentence), "$IIXDR,N,%.2f,V,RAW_WIND_S*", decoded_value);
         }
         // -- BSP (Raw)
         else if (strcmp(get_channel_name(channel), "Boatspeed (Raw)") == 0) {
